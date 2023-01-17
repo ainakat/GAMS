@@ -1,0 +1,742 @@
+********************************************************************************
+*                   Public Land Policy Impact Model                            *
+*                                                                              *
+********************************************************************************
+$Title Elko County, Nevada 600 head, base 7 seasons, 2012
+$ONTEXT
+SIZE = Medium
+Debt = None
+Grazing Fee = Current
+Available Public AUMs = Current
+Season of Use = Current
+$OFFTEXT
+
+$OFFSYMLIST OFFSYMXREF
+
+* Make RNG deterministic
+execseed = 1;
+* Make RNG dependent on the system clock.
+*execseed = 1 + gmilisec(jnow);
+
+$set scenario base_nsf
+
+file returns /R:\uced\Ethan\Projects\Ranch LP\Results\returns_%scenario%.txt/; returns.pc=5;
+* Returns summarizes costs and returns by year
+file foragsum /R:\uced\Ethan\Projects\Ranch LP\Results\forage_%scenario%.txt/; foragsum.pc=5;
+* Foragsum summarizes forage use by year
+file raisesum /R:\uced\Ethan\Projects\Ranch LP\Results\raise_%scenario%.txt/;  raisesum.pc=5;
+* Raisesum summarizes the number of raised animals by year
+file risum /R:\uced\Ethan\Projects\Ranch LP\Results\ranch_inc_%scenario%.txt/; risum.pc=5;
+* Filesum summarizes the Objective Function (ranch income) by year
+file lndsum /R:\uced\Ethan\Projects\Ranch LP\Results\landuse_%scenario%.txt/;  lndsum.pc=5;
+* Lndsum summarizes seasonal land use by year
+file feedsum /R:\uced\Ethan\Projects\Ranch LP\Results\feeduse_%scenario%.txt/; feedsum.pc=5;
+* Feedsum summarizes seasonal feed use by year
+file haysum /R:\uced\Ethan\Projects\Ranch LP\Results\haysales_%scenario%.txt/; haysum.pc=5;
+* haysum summarizes hay sales by year
+file shadowp /R:\uced\Ethan\Projects\Ranch LP\Results\shadowp_%scenario%.txt/; shadowp.pc=5;
+file revenues /R:\uced\Ethan\Projects\Ranch LP\Results\revenues_%scenario%.txt/; revenues.pc=5;
+
+Scalars  totdays         Total days defined by various seasons
+         calfcrop        Calf Crop Percenage at birth           /0.85/
+         minrepl         Required min cow repl rate             /0.18/
+         Bullrepl        Required bull replacement rate         /0.20/
+         minhyear        Required min heifers for sale          /0.11/
+         maxrepl         Max % heifer calves kept               /0.80/
+         cowbull         cow to bull ratio                      /20.0/
+         Rho             discount rate                          /0.07/
+         Commiss         Commission % cost to sell cow          /0.03/
+         Yardage         Yardage and trans Charge($ per day)    /4.22/
+         Salefeed        Sale feed charge ($ per cwt)           /0.64/
+         Offranch        Off ranch income                       /35000/
+         Family          family living allowance                /35000/
+         Fixed           Fixed ranch expenses                   /38874/
+*Fixed include machinery and equipment insurance and taxes, property tax, depreciation and interest
+*Overhead and taxes valued at half to account for farming operation
+         Iwealth         Initial wealth                         /0/
+         Endval          Last year return per AUY               /1.5/
+         Stloanr         Short term borrowing rate              /0.04/
+         Savrate         Interest return on Savings acct        /0.002/
+         Frugal          % of cash transfered                   /0.50/
+         blmusefac       % of max BLM AUMs used in model        /1.00/
+;
+
+*Change years to match price data set, also need to change years in Bounds section near bottom
+Set T Time periods /year01*year40/
+         TLAST(T)  Last Period
+*If you have different seasons, there are changes throughout the model that must be made
+Set seasonON grazing season start date /seas1*seas8/
+Set iter iteration /iter001*iter100/
+Set season(seasonON) grazing season /seas1*seas7/
+*If you have different land or crop types, there are changes throughout the model that must be made
+Set land types of land available
+    /blm, usfs, privleas, deedrang, rmeadow, gmeadow,
+    raisealf, purchalf, pmeadhay/
+Set Crop(land) /rmeadow, raisealf, purchalf, pmeadhay/
+Set landitem /number, aumac, cropyld, conver, usefac, forcost/
+Set date1 /m, d, y, serial, days, months/
+Set livclass /broodcow, cullcow, bull, horse, scalf, hcalf, syear, hyear,
+      purscalf, purhcalf, rephcalf, rephyear, buybcow, sellbcow, buybull/
+Set livecl(livclass) /cullcow, bull, scalf, hcalf, syear, hyear, purscalf,
+      purhcalf, sellbcow/
+Set livpara /buywt, salewt, deathlss, animcost, hayuse/
+set Costsum /forcost, animcost, loancst, totcost, gross, net, netdisc, cashtr,
+      accumsav, stborrow, repayst/
+Set out1 /used, slack, total, shadow, value/
+
+*parameter cropsale(crop) crop sale prices
+*    /rmeadow   100
+*     raisealf  110/;
+
+parameter cropsale(iter,T,crop) feedcrop sale prices
+/
+$ondelim
+$include "R:\uced\Ethan\Projects\Ranch LP\NVhayprices.csv"
+$offdelim
+/;
+
+
+parameter buypric(T,livclass);
+parameter salepric(T,livclass);
+parameter cropsalepric(t,crop);
+parameter forage(t,land,landitem);
+parameter Econ(iter,T,costsum)          Economic Variables;
+Parameter Landsum(iter,Land,T,out1)     Land Use Summary;
+Parameter Landseas(iter,Land,T,season)  Seasonal land use summary;
+Parameter Feedseas(iter,Crop,T,season)  Seasonal Crop use summary;
+Parameter haysale(iter,Crop,T)          crop sales summary;
+Parameter anim(iter,T,Livclass)         raised animals summary;
+parameter AUY(iter,T)                   AUY on ranch;
+parameter ri(iter)                      Ranch Income Summary;
+parameter MS(iter)                      Model status by iter;
+parameter liverev(iter,livecl,T)        Livestock sale revenue;
+parameter hayrev(iter,crop,T)           Hay sale revenue;
+parameter aumshadow(iter,season,T)      Shadow price of AUMs;
+
+
+* NVBeefprices.txt is the external file containing the series of cattle prices for each iteration
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices.txt"
+
+* Stochastic prices
+parameter salep(iter,T,livclass) 'sale prices of sold animals at Year T'
+/
+$ondelim
+$include "R:\uced\Ethan\Projects\Ranch LP\NVcattleprices.csv"
+$offdelim
+/;
+
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices_50years.txt"
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices_42years.txt"
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices_38years.txt"
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices_30years.txt"
+*$Include "R:\uced\Ethan\Projects\Ranch LP\NVBeefprices_20years.txt"
+
+
+* compute the number of days in each grazing season and assure total
+* is 365 or 366. Uses date functions from GAMs Model library calendar.gms.
+table onday(seasonON,date1)
+                 m        d      y
+seas1            4        8      2000
+seas2            5        8      2000
+seas3            6        8      2000
+seas4            9        1      2000
+seas5           10        1      2000
+seas6           11       23      2000
+seas7           12       15      2000
+seas8            4        8      2001
+;
+
+* "Serial" is number of days past Jan. 1, 1900
+onday(seasonON,"serial") = jdate(onday(seasonON,"y"),
+  onday(seasonON,"m"),onday(seasonON,"d"));
+
+onday(seasonON,"days") $ (ord(seasonON) LT card(seasonON)) =
+   onday(seasonON+1,"serial") - onday(seasonON,"serial");
+
+onday(season,"months") = onday(season,"days") / 30.41667;
+
+totdays = sum(season, onday(season,"days"));
+
+*display onday;
+
+if ((totdays = 365 or totdays = 366), display totdays;
+else abort "Total season days not 365 or 366, adjust dates";
+);
+
+* put a one (1) in the seasons when grazed forages are to be available
+* when adjusting blm season of use, you also need to change the equations below
+*    for PERIOD, PERIOD2, and PERIOD3.  For example, if no BLM in seas1 is allowed,
+*    remove the 1 in this table, * out PERIOD in list of equations and the
+*    actual equation
+table avail(land, season) seasonal forage availability
+                 seas1    seas2   seas3   seas4   seas5   seas6   seas7
+blm                1        1       1       1
+privleas
+deedrang           1        1       1       1       1
+rmeadow                                             1       1
+gmeadow            1        1       1       1       1       1
+purchalf
+raisealf
+;
+
+* put a one (1) in the seasons when hay can be fed.
+table cropaval(crop, season) seasonal crop feeding availability
+                  seas1   seas2   seas3   seas4   seas5   seas6   seas7
+rmeadow             1       1                       1       1       1
+purchalf            1       1                               1       1
+pmeadhay            1       1                               1       1
+raisealf            1       1                               1       1
+;
+
+* Enter aumac=1 when units are AUMs
+* Add $20/ton to market prices for purchased hays as a delivery cost
+
+* Units of forage types
+*     ACRES: state, deedrang, rmeadow, gmeadow, raisealf
+*     AUM: blm, usfs, privleas
+*     TON: purchalf, pmeadhay
+* cropyld is tons per acre
+* conver = conversion factor Tons to AUMs
+* usefac = percentage of amount available that can be used in this run - used for policy analysis
+* forcost is in units of landtype.  For hays, it is times the cropyld.
+*table forage(land,landitem) forage sources
+*            number     aumac   cropyld  conver    usefac    forcost
+*blm         3675.      1.0                         1.00       9.18
+*privleas     000.      1.0                         1.00      19.36
+*deedrang     115.      1.0                         1.00       4.36
+*rmeadow      800.      2.5       1.5     2.42      1.00     107.00
+*gmeadow      800.      5.0                         1.00      85.00
+*raisealf     000.      0.3       4.5     2.42      1.00     450.00
+*purchalf    1000.      0.0       1.0     2.42      1.00     185.00
+*pmeadhay    1000.      0.0       1.0     2.42      1.00     150.00
+*;
+
+parameter foragetable(iter,t,land,landitem) forage sources
+/
+$ondelim
+$include "R:\uced\Ethan\Projects\Ranch LP\foragetable.csv"
+$offdelim
+/;
+
+*$Include "R:\uced\Ethan\Projects\Ranch LP\ForageTable.txt"
+
+
+* Optional Stochasitc AUMs
+*forage(t,"blm","number") = normal(3675, 500);
+*forage(t,"blm","usefac") = 1;
+*forage(t,"purchalf","number") = 1000;
+*forage(t,"pmeadhay","number") = 1000;
+
+
+
+*display forage;
+
+table aue1(livclass,season) AUE for animal classes by season in year T
+                 seas1    seas2    seas3    seas4    seas5    seas6    seas7
+broodcow         1.00     1.00     1.00     1.00     1.00     1.00     1.00
+buybcow          1.00     1.00     1.00     1.00     1.00     1.00     1.00
+sellbcow         1.00     1.00     1.00     1.00     1.00
+cullcow          1.00     1.00     1.00     1.00     1.00
+bull             1.25     1.25     1.25     1.25     1.25     1.25     1.25
+horse            1.25     1.25     1.25     1.25     1.25     1.25     1.25
+scalf                                                0.50
+hcalf                                                0.50
+purscalf         0.50     0.50     0.75     0.75
+purhcalf         0.50     0.50     0.75     0.75
+syear                                                0.50     0.50     0.50
+hyear                                                0.50     0.50     0.50
+rephcalf                                             0.50     0.50     0.50
+rephyear                                             0.50     0.50     0.50
+;
+
+
+table aue2(livclass,season) AUE for animal classes by season in year T+1
+                 seas1    seas2    seas3    seas4    seas5    seas6    seas7
+broodcow
+cullcow
+bull
+horse
+scalf
+hcalf
+purscalf
+purhcalf
+syear            0.75     0.75     0.75     0.75     1.00
+hyear            0.75     0.75     0.75     0.75     1.00
+rephcalf
+rephyear         0.75     0.75     0.75     0.75     1.00     1.00     1.00
+;
+
+*animcost = use gross margin divided by brood cows, cull cows, and replacement yearlings
+* enter same animal cost for all 3 classes.
+
+* hayuse is the percentage that alfalfa hay must be used to feed that class.
+
+table Animal(livclass,livpara) sale weights and costs by animal class
+              buywt     salewt   deathlss     animcost    hayuse
+broodcow                           0.02         74.00
+cullcow                  9.50      0.02         74.00
+*Total Operating Cost less feed already accounted for previously and owner labor equals animcost
+bull                     2.90      0.005         0.0
+* assumptions for bull 1450 lb but kept 5 years so (14.50/5) = 2.90
+scalf                    4.75      0.03          0.0
+hcalf                    4.35      0.03          0.0
+*syear normally not raised on ranch
+syear                    0.00      0.06         74.0        .40
+hyear                    7.50      0.06         74.0        .40
+* owned yearling death loss should include both calf and yearling losses
+* stockers not normal
+purscalf       5.00      6.99      0.04       1500.0
+purhcalf       5.00      6.59      0.04       1500.0
+rephcalf                           0.04          0.0        .45
+rephyear                           0.02        74.00        .40
+buybcow        1.00
+sellbcow                 1.00      0.02
+buybull        1.00
+;
+
+*display Animal;
+
+
+PARAMETERS
+     DF(T)      Discount factor at time T;
+     DF(T) = (1+RHO) ** (-1 * (ORD(T)));
+*Display DF;
+TLAST(T)  = YES$(ORD(T) EQ CARD(T));
+*DISPLAY TLAST;
+
+POSITIVE VARIABLES
+     Landuse(land,season,T)        Acres or AUMS of land used in year T
+     slacklnd(Land,T)              Unused land resources
+     raise(livclass,T)             Raise livestock of class in year T (head)
+     selllive(livecl,T)            Sell livestock of class in year T (cwt)
+     sellcrop(crop,T)              Sell forage crop in year T
+     feedcrop(Crop,season,T)       Feed forage crop in year T
+     FORCOST(T)                    Forage harvest costs
+     ANIMCOST(T)                   Animal production costs
+     GROSS(T)                      Gross livestock returns
+     STBORROW(T)                   Short Term Borrowing
+     REPAYST(T)                    Repay Short Term Loan
+     LOANCST(T)                    Principal and Interest Payments
+;
+
+VARIABLES
+     Ranchinc                      Ranch Income
+     NET(T)                        Net livestock returns undiscounted
+     NETDIS(T)                     Net livestock returns discounted
+     CASHTR(T)                     Cash transfered to next period
+     AccumSav(T)                   Accumulated Savings
+     TERM                          Terminal Value
+;
+
+EQUATIONS
+
+      LANDAVAL(LAND, T)     Land Use Equation
+      MEADOW(LAND, T)       meadow use equation
+      AUMAVAIL(T, season)   Total AUMS available
+      CROPPROD(crop,T)      Production of crops
+      HAYCALF(T,season)     Force calves to eat alfalfa
+      BULLRAT(T)            Set Bull to cow ratio for year 1
+      CULLRATC(T)           Set cull cow to raised cow ratio
+      COWTRAN(T)            Cow transfer between years
+      BULLTRAN(T)           Bull transfer between years
+      REPTRAN(T)            Calf replacement transfer to yearling replacement
+      MINREPLC(T)           Minimum cow replacement rate
+      MAXREPLC(T)           Maximum cow replacement rate
+      MINHYRC(T)            Minimum additional replacements sold
+*      MAXHYRC(T)            Maximum additional replacements sold in year 1
+      RSCALFC1(T)           Raise steer calf ratio year 1
+      RSCALFC2(T)           Raise steer calf ratio year NE 1
+      RHCALFC1(T)           Raise heifer calf ratio year 1
+      RHCALFC2(T)           Raise heifer calf ratio year NE 1
+      SALES(livclass,T)     Sales transfer
+      COSTFORC(T)           Forage Production costs at T
+      COSTANIC(T)           Animal production costs at T
+      GROSSRET(T)           Gross Livestock returns at T
+      NETRET(T)             Net Livestock returns at T
+      NETRETD(T)            Discounted net returns at T
+      INCOME                Ranch Income definition
+      CASHSOUR(T)           Transfers of Cash
+      SAVING1(T)            Accumulated Savings at time 1
+      SAVING2(T)            Accumulated Savings at time T
+      STREPAY(T)            Force repayment of Short-term loans
+      LOANPAY(T)            Loan Repayment Calculation
+      TERMVAL               Terminal Value (Net R infinitely discounted)
+*Equation to ensure all BLM permit is used.
+      BUREAU(LAND,T)        BLM land use equation
+*These need to be adapted to each model depending on when seasons are available.
+      PERIOD(T,season)      Grazing period on BLM equate season 1 and 2
+      PERIOD2(T,season)     Grazing period on BLM equate season 2 and 3
+      PERIOD3(T,season)     Grazing period on BLM equate season 3 and 4
+;
+
+*Forage demand and supply equations
+
+LANDAVAL(LAND,T)..
+    SUM(season,landuse(land,season,T)) + slacklnd(land,T) =E=
+*LANDAVAL(LAND,T)..  SUM(season,landuse(land,season,T))=L=
+    forage(t,land,"number") * forage(t,land,"usefac");
+
+MEADOW("rmeadow",T)..
+    SUM(season,landuse("rmeadow",season,T)) +
+    SUM(season,landuse("gmeadow",season,T))
+    =L= forage(t,"rmeadow","number");
+
+*Total Crops fed and sold must be less than or equal to the total crop grown.
+CROPPROD(CROP,T)..
+    sum(season,feedcrop(crop,season,T)) + sellcrop(Crop,T)
+    =L= sum(season,landuse(crop,season,T) * forage(t,crop,"cropyld") * cropaval(crop,season));
+
+*Crops are fed to cattle
+AUMAVAIL(T, season)..
+    SUM(livclass, raise(livclass,T) * aue1(livclass,season)) *
+    onday(season,"months")
+    + SUM(livclass, raise(livclass,T-1) * aue2(livclass, season)) * onday(season,"months")
+    =L= SUM(land,forage(t,land,"aumac") * landuse(land,season,T) * avail(land,season))
+    + SUM(crop,feedcrop(crop,season,T) * forage(t,crop,"conver") * cropaval(crop,season));
+
+*retained calves must be fed alfalfa during winter
+HAYCALF(T, season)$ (ORD(Season) EQ 6 OR ORD(SEASON) EQ 7)..
+    SUM(livclass, raise(livclass,T) *
+     aue1(livclass,season) * animal(livclass,"hayuse")) * onday(season,"months")
+     + SUM(livclass, raise(livclass,T-1) * aue2(livclass, season) * animal(livclass,"hayuse"))
+     * onday(season,"months")
+     =L= feedcrop("purchalf",season,T) * forage(t,"purchalf","conver")
+     + feedcrop("raisealf",season,T) * forage(t,"raisealf","conver");
+
+*ensures that BLM stocking is constant (i.e., model cannot move cattle on and off BLM between seasons)
+BUREAU(LAND, T)..
+    SUM(season,landuse("blm",season,T) * avail("blm",season))
+    =E= forage(t,"blm","number") * forage(t,"blm","usefac");
+
+PERIOD(T,season)..
+    landuse("blm","seas1",T) / onday("seas1","days")
+    =E= landuse("blm","seas2",T) / onday("seas2","days");
+
+PERIOD2(T,season)..
+    landuse("blm","seas2",T) / onday("seas2","days")
+    =E= landuse("blm","seas3",T) / onday("seas3","days");
+
+PERIOD3(T,season)..
+    landuse("blm","seas3",T) / onday("seas3","days")
+    =E= landuse("blm","seas4",T) / onday("seas4","days");
+
+*Cattle transfer equations
+
+COWTRAN(T)$(ORD(T) GT 1)..
+    raise("broodcow",T) + raise("cullcow",T) + raise("sellbcow",T)
+    =L= raise("broodcow",T-1) * (1-Animal("broodcow","deathlss")) +
+    raise("rephyear",T-1) * (1-Animal("rephyear","deathlss")) + raise("buybcow",T);
+
+BULLTRAN(T)$(ORD(T) GT 1)..
+    raise("bull",T) =L= (1-bullrepl) * raise("bull",T-1) *
+    (1-animal("bull","deathlss")) + raise("buybull",T);
+
+REPTRAN(T)$(ORD(T) GT 1)..
+    raise("rephcalf",T-1) * (1- animal("rephcalf","deathlss"))
+    =E= raise("rephyear",T);
+
+*Determines optimal number of bulls based on number of cows
+BULLRAT(T)..
+    raise("broodcow",T) + raise("cullcow",T) + raise("rephyear",T)
+    =E= cowbull * raise("bull",T);
+
+* optimal cull rate
+CULLRATC(T)..
+    raise("cullcow",T) =e= minrepl * (raise("broodcow",T) + raise("rephyear",T));
+*Jordan Valley model would prefer to raise yearlings, so try sign on next equation as =G= on most other models
+
+MINHYRC(T)..
+    Raise("hyear",T) =G= minhyear * raise("rephyear",T);
+*MAXHYRC(T)$(ORD(T) EQ 1)..  raise("rephyear",T) =L= minrepl*raise("broodcow",T);
+
+MINREPLC(T)$(ORD(T) GT 1)..
+    minrepl * (raise("broodcow",T) / (1-Animal("broodcow","deathlss")) +
+    raise("cullcow",T) / (1-Animal("cullcow","deathlss"))) =L=
+    raise("rephyear",T-1) * (1-Animal("rephyear","deathlss")) + raise("buybcow",T);
+
+MAXREPLC(T)..
+    raise("rephcalf",T)
+    =L= maxrepl * (raise("hcalf",T) + raise("hyear",T) + raise("rephcalf",T));
+
+RSCALFC1(T)$(ORD(T) EQ 1)..
+    raise("scalf",T) + raise("syear",T) =L= calfcrop / 2 * (raise("broodcow",T)
+     + raise("rephyear",T));
+
+RSCALFC2(T)$(ORD(T) GT 1)..
+    raise("scalf",T) + raise("syear",T) =L= calfcrop / 2 * (raise("broodcow",T)
+     + raise("rephyear",T-1));
+
+RHCALFC1(T)$(ORD(T) EQ 1)..
+    raise("hcalf",T) + raise("hyear",T) + raise("rephcalf",T) =L=
+     calfcrop / 2 * (raise("broodcow",T) + raise("rephyear",T)) ;
+
+RHCALFC2(T)$(ORD(T) GT 1)..
+    raise("hcalf",T) + raise("hyear",T) + raise("rephcalf",T) =L=
+     calfcrop / 2 * (raise("broodcow",T) + raise("rephyear",T-1)) ;
+
+
+*Livestock sales and costs
+SALES(livecl,T).. selllive(livecl,T) =L= (1-Animal(livecl,"deathlss")) *
+    Animal(livecl,"salewt") * raise(livecl,T);
+
+COSTFORC(T)..
+    FORCOST(T) =E= SUM(season,SUM(land,landuse(Land,Season,T) * forage(t,land,"forcost")));
+
+COSTANIC(T)..
+    ANIMCOST(T) =E= SUM(livclass,animal(livclass,"animcost") * raise(livclass,T))
+    + SUM(livclass,buypric(T,livclass) * animal(livclass,"buywt") * raise(livclass,T));
+
+GROSSRET(T)..
+    GROSS(T) =E= SUM(livecl,selllive(livecl,T) * salepric(T,livecl))
+    + SUM(CROP,SELLCROP(crop,T) * cropsalepric(t,crop));
+
+LOANPAY(T).. LOANCST(T) =E= (1 + Stloanr) * repayst(T);
+
+CASHSOUR(T).. CASHTR(T) =E= frugal * NET(T) + Offranch - family - fixed;
+
+NETRET(T).. NET(T) =E= GROSS(T) - FORCOST(T) - ANIMCOST(T) - LOANCST(T);
+
+NETRETD(T).. NETDIS(T) =E= NET(T) * DF(T);
+
+INCOME .. Ranchinc =e= sum(T, NETDIS(T)) + TERM;
+
+SAVING1(T)$(ORD(T) EQ 1).. AccumSav(T) =e= IWEALTH + NET(T) + OFFRANCH
+    - Family - fixed + STBORROW(T);
+
+SAVING2(T)$(ORD(T) GT 1).. AccumSav(T) =e= AccumSav(T-1) * (1 + savrate)
+    + frugal * NET(T) + OFFRANCH - Family - fixed + STBORROW(T);
+
+STREPAY(T).. STBORROW(T-1) =L= REPAYST(T);
+
+*Terminal Value - need to calculate the gross margin/head.  Divide total gross margin
+*by expected number of brood cows, cull cows, replacement heifer calves, and
+*replacement heifer yearlings.
+TERMVAL(TLAST)..
+    TERM =E= ((raise("BROODCOW",TLAST) + raise("CULLCOW",TLAST) +
+    raise("rephyear",TLAST) + raise("rephcalf",TLAST)) * Endval)
+    / RHO * (1 - 1 / ((1+RHO) ** CARD(T)));
+
+**************** Set bounds for selected variables **********************
+
+* accumsav is the minimum accumulated savings
+* need to ensure that stborrow year matches your price set
+* the year01 numbers set an initial endowment of animals
+* the year40 numbers limit the number of replacements for the terminal value
+
+accumsav.lo(T) = 0;
+feedcrop.up("rmeadow","Seas5",T) = 0;
+landuse.up("rmeadow","Seas1",T) = 0;
+landuse.up("rmeadow","Seas2",T) = 0;
+landuse.up("rmeadow","Seas3",T) = 0;
+landuse.up("rmeadow","Seas4",T) = 0;
+landuse.up("rmeadow","Seas7",T) = 0;
+*stborrow.up(T) = 100000;
+*stborrow.up(T)$(ORD(T) EQ CARD(T)) = 0;
+raise.up("sellbcow",T)$(ORD(T) EQ 1) = 0;
+*raise.up("buybcow",T) = 1000;
+*raise.lo("broodcow",T) = 0;
+raise.up("broodcow",T)$(ORD(T) EQ 1) = 492;
+raise.up("rephyear",T)$(ORD(T) EQ 1) = 120;
+* raise.up("rephyear",T)$(ORD(T) EQ CARD(T)) = 120;
+* raise.up("rephcalf",T)$(ORD(T) EQ CARD(T)) = 126;
+raise.lo("horse",T) = 12;
+*landuse.up("blm","seas2",T) = 297;
+ranchinc.up = 5000000;
+
+
+***************************************************************************
+* You can change the name of the model to match your area.  Need to change the
+* name in the solve equation as well.
+model Elkobase "base level model" / all /;
+*option lp=gamschk;
+
+option lp = minos5;
+option limrow = 5;
+option limcol = 00;
+option SOLPRINT = off;
+
+******************* Start Loop************Start Loop*********************
+loop(iter,
+
+salepric(T,"cullcow")       = salep(iter,T,"cullcow");
+salepric(T,"bull")          = salep(iter,T,"bull");
+salepric(T,"scalf")         = salep(iter,T,"scalf");
+salepric(T,"hcalf")         = salep(iter,T,"hcalf");
+salepric(T,"syear")         = salep(iter,T,"syear");
+salepric(T,"hyear")         = salep(iter,T,"hyear");
+salepric(T,"purscalf")      = salep(iter,T,"purscalf");
+salepric(T,"purhcalf")      = salep(iter,T,"purhcalf");
+
+cropsalepric(t,"rmeadow")   = cropsale(iter,t,"rmeadow");
+cropsalepric(t,"raisealf")   = cropsale(iter,t,"raisealf");
+
+*assumes %commission of (Commiss), daily yardage fee of YARDAGE, Feed of
+* $SALEFEED/cwt
+salepric(T,"sellbcow") = salep(iter,T,"cullcow") * Animal("sellbcow","salewt");
+*buypric(T,"purscalf")= buyp(iter,T,"purscalf");
+*buypric(T,"purhcalf")= buyp(iter,T,"purhcalf");
+buypric(T,"buybcow") = salep(iter,T,"buybcow");
+buypric(T,"buybull") = 154.09 + 2.0549 * buypric(T,"buybcow");
+
+forage(t,land,landitem) = foragetable(iter,t,land,landitem);
+forage(t,"blm","usefac") = blmusefac;
+
+
+* Make sure the second word matches your model name specified above in the MODEL statement.
+
+Solve Elkobase using lp maximizing ranchinc;
+
+display ranchinc.l;
+display
+     landuse.l
+     raise.l
+     feedcrop.l
+*     raise.up
+     selllive.l
+     sellcrop.l
+     aumavail.m
+;
+
+Econ(iter,T,'forcost')  = forcost.L(T);
+Econ(iter,T,'animcost') = animcost.L(T);
+Econ(iter,T,'loancst')  = loancst.L(T);
+Econ(iter,T,'totcost')  = forcost.L(T) + animcost.L(T) + loancst.L(T);
+Econ(iter,T,'gross')    = gross.L(T);
+Econ(iter,T,'Net')      = Net.L(T);
+Econ(iter,T,'netdisc')  = Netdis.L(T);
+Econ(iter,T,'cashtr')   = cashtr.L(T);
+Econ(iter,T,'accumsav') = accumsav.L(T);
+Econ(iter,T,'stborrow') = stborrow.L(T);
+Econ(iter,T,'repayst')  = repayst.L(T);
+
+liverev(iter,livecl,T) = selllive.l(livecl,T) * salepric(T,livecl);
+*cullcow, bull, scalf, hcalf, syear, hyear, purscalf, purhcalf, sellbcow
+
+hayrev(iter,crop,T) = sellcrop.l(crop,T) * cropsalepric(t,crop);
+*rmeadow, raisealf, purchalf, pmeadhay
+
+aumshadow(iter,season,t) = aumavail.m(t, season);
+
+Landsum(iter,Land,T,'used')   = sum(season,landuse.L(land,season,T));
+Landsum(iter,Land,T,'value')  = sum(season,landuse.L(land,season,T)) * forage(t,land,"forcost");
+Landsum(iter,Land,T,'Slack')  = slacklnd.L(land,T);
+Landsum(iter,Land,T,'Total')  = sum(season,landuse.L(land,season,T)) + slacklnd.L(land,T);
+Landsum(iter,Land,T,'Shadow') = slacklnd.m(land,T);
+
+
+Landseas(iter,Land,T,'seas1') = landuse.L(land,'seas1',T);
+Landseas(iter,Land,T,'seas2') = landuse.L(land,'seas2',T);
+Landseas(iter,Land,T,'seas3') = landuse.L(land,'seas3',T);
+Landseas(iter,Land,T,'seas4') = landuse.L(land,'seas4',T);
+Landseas(iter,Land,T,'seas5') = landuse.L(land,'seas5',T);
+Landseas(iter,Land,T,'seas6') = landuse.L(land,'seas6',T);
+Landseas(iter,Land,T,'seas7') = landuse.L(land,'seas7',T);
+
+Feedseas (iter,Crop,T,'seas1') = Feedcrop.L(crop,'seas1',T);
+Feedseas (iter,Crop,T,'seas2') = Feedcrop.L(crop,'seas2',T);
+Feedseas (iter,Crop,T,'seas3') = Feedcrop.L(crop,'seas3',T);
+Feedseas (iter,Crop,T,'seas4') = Feedcrop.L(crop,'seas4',T);
+Feedseas (iter,Crop,T,'seas5') = Feedcrop.L(crop,'seas5',T);
+Feedseas (iter,Crop,T,'seas6') = Feedcrop.L(crop,'seas6',T);
+Feedseas (iter,Crop,T,'seas7') = Feedcrop.L(crop,'seas7',T);
+
+Haysale(iter,Crop,T) = sellcrop.L(crop,T);
+
+anim(iter,T,"broodcow") = raise.L("broodcow",T);
+anim(iter,T,"cullcow")  = raise.L("cullcow",T);
+anim(iter,T,"bull")     = raise.L("bull",T);
+anim(iter,T,"horse")    = raise.L("horse",T);
+anim(iter,T,"scalf")    = raise.L("scalf",T);
+anim(iter,T,"hcalf")    = raise.L("hcalf",T);
+anim(iter,T,"syear")    = raise.L("syear",T);
+anim(iter,T,"hyear")    = raise.L("hyear",T);
+anim(iter,T,"purscalf") = raise.L("purscalf",T);
+anim(iter,T,"purhcalf") = raise.L("purhcalf",T);
+anim(iter,T,"rephcalf") = raise.L("rephcalf",T);
+anim(iter,T,"rephyear") = raise.L("rephyear",T);
+anim(iter,T,"buybcow")  = raise.L("buybcow",T);
+anim(iter,T,"sellbcow") = raise.L("sellbcow",T);
+anim(iter,T,"buybull")  = raise.L("buybull",T);
+
+AUY(ITER,T) = sum(season, sum(livclass, raise.L(livclass,T) * aue1(livclass,season)) *
+    onday(season,"months") + SUM(livclass, raise.L(livclass,T-1) * aue2(livclass,season)) *
+    onday(season,"months"))  /12;
+*Options display AUY;
+
+ri(iter)=ranchinc.L;
+MS(iter)=Elkobase.modelstat;
+);
+* END iter loop
+*display feedseas;
+option decimals=1; display Econ;
+options decimals=1; display Landsum;
+options decimals=1; display anim;
+
+put returns 'runtype' 'year' 'iter';
+loop(costsum, put costsum.tl);
+loop(iter,
+    loop(T,
+        put / 'Base' T.te(T);
+        put iter.te(iter);
+        loop (Costsum, put Econ(iter,T,costsum))));
+
+put foragsum 'runtype' 'landtype' 'year' 'iter';
+loop(out1, put out1.tl);
+    loop(iter,
+        loop(land,
+            loop(T,
+                put /'Base'  Land.te(Land), T.te(T), iter.te(iter);
+                loop(out1, put landsum(iter,Land,T,out1)))));
+
+put lndsum 'runtype' 'landtype' 'year' 'iter';
+loop(season, put season.tl);
+    loop(iter,
+        loop(land,
+            loop(T,
+                put / 'Base' Land.te(Land), T.te(T);
+                put iter.te(iter);
+                loop (season, put Landseas(iter,Land,T,season)))));
+
+put feedsum 'runtype' 'crop' 'year' 'iter';
+loop(season, put season.tl);
+    loop(iter,
+        loop(Crop,
+            loop(T,
+                put /"Base" Crop.te(Crop), T.te(T);
+                put iter.te(iter);
+ loop (season, put Feedseas(iter,Crop,T,season)))));
+
+put haysum 'runtype' 'crop' 'year' 'iter' 'tonsold' 'revenue';
+loop(iter,
+    loop(crop,
+        loop(T,
+            put /"Base" Crop.te(Crop), T.te(T), iter.te(iter);
+            put haysale(iter,crop,T)
+            put hayrev(iter,crop,T))));
+
+put raisesum 'runtype' 'year' 'iter' 'auy';
+loop(livclass, put livclass.tl);
+loop(iter,
+    loop(T,
+        put /"Base" T.te(T);
+        put iter.te(iter);
+        put AUY(ITER,T);
+        loop(livclass, put anim(iter,T,Livclass))));
+
+put risum 'runtype' 'iter' 'ranch_inc' 'model status';
+loop(iter,
+    put /"Base" iter.te(iter), ri(iter), ms(iter));
+
+put revenues 'runtype' 'iter' 'liveclass' 'year' 'revenue';
+loop(iter,
+    loop(livecl,
+        loop(T,
+            put /"Base" iter.te(iter), livecl.te(livecl), T.te(T)
+            put liverev(iter,livecl,T))));
+
+put shadowp 'runtype' 'iter' 'season' 'year' 'shadow_price';
+loop(iter,
+    loop(season,
+        loop(T,
+            put /'Base' iter.te(iter), season.te(season), T.te(T);
+            put aumshadow(iter,season,t))));
